@@ -63,3 +63,21 @@ training:
   device: auto
   checkpoint_dir: artifacts/checkpoints
   run_dir: artifacts/runs
+
+serving:
+  checkpoint_path: artifacts/checkpoints/best.pt
+  # Bind all interfaces: in a container the port is published by the runtime.
+  host: 0.0.0.0
+  port: 8000
+  # Stricter than development: a wrong species stated confidently is the
+  # failure mode that matters here, so more gets routed to review.
+  review_threshold: 0.80
+  unknown_threshold: 0.40
+  max_image_bytes: 15728640
+  max_archive_bytes: 209715200
+  max_zip_entries: 500
+  max_zip_uncompressed_bytes: 1073741824
+  max_compression_ratio: 100.0
+  allowed_extensions: [".jpg", ".jpeg", ".png"]
+  api_base_url: http://127.0.0.1:8000
+  request_timeout_seconds: 300.0

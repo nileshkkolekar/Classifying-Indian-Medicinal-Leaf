@@ -28,6 +28,10 @@ flowchart TD
     H --> I[evaluation.metrics<br/>macro-F1, confusion]
     H --> J[inference.predictor]
     I --> K[evaluation.error_analysis<br/>confusions, confident errors]
+
+    J --> L[api.service<br/>upload limits, verdict policy]
+    L --> M[api.app<br/>FastAPI: /predict, /predict/batch]
+    M -->|HTTP| N[ui.streamlit_app<br/>upload, results table, CSV]
 ```
 
 ## Module responsibilities
@@ -49,6 +53,10 @@ flowchart TD
 | `evaluation.metrics` | Scalar and per-class metrics, confusion plot | Reading data |
 | `evaluation.error_analysis` | What went wrong and how confidently | Computing headline metrics |
 | `inference.predictor` | Load a checkpoint, classify images | Reading `configs/` |
+| `api.schemas` | The wire contract: verdicts, results, thresholds | Any logic |
+| `api.service` | Upload limits, ZIP safety, verdict policy | Knowing about HTTP |
+| `api.app` | Routing, multipart parsing, status codes | Deciding verdicts |
+| `ui.streamlit_app` | Upload, display, CSV export | Loading a model |
 
 ## Key decisions
 
@@ -95,6 +103,38 @@ monitors `val_macro_f1` by default for the same reason.
 `LeafClassifier.train()` keeps a frozen backbone in eval mode so its
 BatchNorm running statistics do not drift while only the head is learning —
 otherwise "frozen" is not actually frozen.
+
+### The service may decline to answer
+
+A softmax always produces a winner. On a photo of a hand, a screenshot, or a
+species the model has never seen, that winner is noise wearing the costume of
+an answer — and a UI that prints "Neem — 31%" invites someone to believe it.
+
+So there are three bands rather than two. Above `review_threshold` the result
+stands; between the two thresholds it is returned but flagged, highlighted in
+the UI and counted separately so it can be routed to a reviewer; below
+`unknown_threshold` the label is withheld entirely and the response says
+`unable_to_classify`. The confidence and the full distribution come back in
+every case, so a caller is free to apply its own policy — what the service
+refuses to do is *assert* a species it cannot support.
+
+Both thresholds live in `ServingConfig` and can be overridden per request.
+They are configuration precisely because the right bar depends on what the
+answer is used for, and that is not a decision the code should freeze.
+
+### Upload handling is hostile-input territory
+
+The prediction endpoints are the only place the system accepts bytes from
+outside, and the ZIP endpoint decompresses them. The limits in
+`api.service.ZipLimits` — entry count, per-file size, total uncompressed
+size, and compression ratio — are checked against the central directory
+*before* anything is decompressed, and the read itself is capped in case the
+header lied. A ZIP that expands to gigabytes is a few lines to construct.
+
+Nothing is written to disk at any point (NFR-8): uploads are decoded from
+memory and dropped when the request ends. Archive member names are sanitised
+for display only — traversal is structurally impossible because no path from
+the archive is ever used to open a file.
 
 ## Data contracts
 

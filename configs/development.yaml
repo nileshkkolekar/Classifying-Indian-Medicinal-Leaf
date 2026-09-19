@@ -61,3 +61,20 @@ training:
   device: auto
   checkpoint_dir: artifacts/checkpoints
   run_dir: artifacts/runs
+
+serving:
+  checkpoint_path: artifacts/checkpoints/best.pt
+  host: 127.0.0.1
+  port: 8000
+  # Below review_threshold a prediction is flagged for a human (FR-12);
+  # below unknown_threshold no species is named at all (FR-14).
+  review_threshold: 0.70
+  unknown_threshold: 0.30
+  max_image_bytes: 15728640
+  max_archive_bytes: 104857600
+  max_zip_entries: 200
+  max_zip_uncompressed_bytes: 524288000
+  max_compression_ratio: 100.0
+  allowed_extensions: [".jpg", ".jpeg", ".png"]
+  api_base_url: http://127.0.0.1:8000
+  request_timeout_seconds: 120.0

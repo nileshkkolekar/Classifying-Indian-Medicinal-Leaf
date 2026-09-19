@@ -6,6 +6,8 @@ the suite runs on a fresh clone and in CI where the dataset is absent.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -86,3 +88,72 @@ def augmentation_config():
     from medicinal_leaf.config.settings import AugmentationConfig
 
     return AugmentationConfig(enabled=True)
+
+
+# ── API fixtures ─────────────────────────────────────────────────────────
+
+CLASS_NAMES = ["Aloevera", "Amla", "Mint", "Neem", "Tulsi"]
+
+
+class StubPredictor:
+    """Deterministic stand-in for ``LeafPredictor``.
+
+    The API's job is policy and plumbing — thresholds, flagging, upload
+    limits — none of which needs real weights. Substituting this keeps the
+    API tests fast and free of checkpoints and network downloads.
+    """
+
+    def __init__(self, confidence: float = 0.95, label: str = "Tulsi") -> None:
+        self.class_names = list(CLASS_NAMES)
+        self.confidence = confidence
+        self.label = label
+        self.batch_calls = 0
+
+    def _prediction(self, source: str | None = None):
+        from medicinal_leaf.inference.predictor import Prediction
+
+        spare = (1.0 - self.confidence) / (len(self.class_names) - 1)
+        probabilities = dict.fromkeys(self.class_names, spare)
+        probabilities[self.label] = self.confidence
+        return Prediction(
+            label=self.label,
+            confidence=self.confidence,
+            probabilities=probabilities,
+            source=source,
+        )
+
+    def predict_batch(self, sources, batch_size: int = 32):
+        self.batch_calls += 1
+        return [self._prediction() for _ in sources]
+
+    def predict(self, source):
+        return self._prediction()
+
+
+@pytest.fixture
+def stub_predictor() -> StubPredictor:
+    return StubPredictor()
+
+
+@pytest.fixture
+def jpeg_bytes() -> bytes:
+    """A small but genuinely decodable JPEG."""
+    rng = np.random.default_rng(42)
+    array = rng.integers(0, 256, (48, 64, 3), dtype=np.uint8)
+    buffer = io.BytesIO()
+    Image.fromarray(array).save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def make_zip():
+    """Factory building an in-memory ZIP from ``{name: bytes}``."""
+
+    def _make(files: dict[str, bytes], compression: int = zipfile.ZIP_DEFLATED) -> bytes:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression) as archive:
+            for name, payload in files.items():
+                archive.writestr(name, payload)
+        return buffer.getvalue()
+
+    return _make

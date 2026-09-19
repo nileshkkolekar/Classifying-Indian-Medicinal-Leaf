@@ -179,6 +179,60 @@ class TrainingConfig(BaseModel):
         return "cpu"
 
 
+class ServingConfig(BaseModel):
+    """The prediction API and the Streamlit UI in front of it.
+
+    The two thresholds implement the BRD's review policy and are config, not
+    constants (FR-13): ``review_threshold`` flags a prediction as needing a
+    human look (FR-12), and below ``unknown_threshold`` the service declines
+    to name a species at all rather than forcing one (FR-14).
+    """
+
+    checkpoint_path: Path = Path("artifacts/checkpoints/best.pt")
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+
+    review_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    unknown_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
+
+    # Upload limits. An endpoint that unpacks archives is the obvious denial
+    # of service target, so every dimension is bounded.
+    max_image_bytes: int = Field(default=15 * 1024 * 1024, ge=1)
+    max_archive_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
+    max_zip_entries: int = Field(default=200, ge=1)
+    max_zip_uncompressed_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
+    # A zip bomb's whole trick is an absurd uncompressed:compressed ratio.
+    max_compression_ratio: float = Field(default=100.0, gt=1.0)
+
+    allowed_extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png")
+
+    # Where the Streamlit UI looks for the API.
+    api_base_url: str = "http://127.0.0.1:8000"
+    request_timeout_seconds: float = Field(default=120.0, gt=0.0)
+
+    @field_validator("checkpoint_path")
+    @classmethod
+    def _resolve(cls, value: Path) -> Path:
+        return _absolutize(value)
+
+    @field_validator("allowed_extensions")
+    @classmethod
+    def _normalise_extensions(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            ext if ext.startswith(".") else f".{ext}" for ext in (e.lower() for e in value)
+        )
+
+    @model_validator(mode="after")
+    def _thresholds_ordered(self) -> ServingConfig:
+        if self.unknown_threshold > self.review_threshold:
+            raise ValueError(
+                "unknown_threshold must not exceed review_threshold "
+                f"({self.unknown_threshold} > {self.review_threshold})"
+            )
+        return self
+
+
 class Settings(BaseSettings):
     """Root configuration object handed to every stage of the pipeline."""
 
@@ -200,6 +254,7 @@ class Settings(BaseSettings):
     augmentation: AugmentationConfig = Field(default_factory=AugmentationConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+    serving: ServingConfig = Field(default_factory=ServingConfig)
 
     @classmethod
     def settings_customise_sources(

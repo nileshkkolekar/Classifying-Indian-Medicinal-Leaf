@@ -15,7 +15,7 @@ instead of the leaf, and accuracy figures that hide an ignored class. See
 python -m venv .venv
 .venv\Scripts\activate          # Windows;  source .venv/bin/activate elsewhere
 
-pip install -e ".[dev,notebook]"
+pip install -e ".[dev,notebook,serve]"
 # CPU-only torch, if you have no GPU:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
@@ -24,6 +24,9 @@ cp .env.example .env            # optional; every key has a default
 leaf-train prepare              # index → validate → split → manifest
 leaf-train fit                  # fine-tune against the manifest
 leaf-train evaluate             # score the held-out test split
+
+leaf-api                        # serve the API on http://127.0.0.1:8000
+streamlit run src/medicinal_leaf/ui/streamlit_app.py    # then the UI
 ```
 
 `prepare` refuses to continue when it finds something that would invalidate
@@ -79,7 +82,12 @@ src/medicinal_leaf/
 ├── evaluation/
 │   ├── metrics.py              macro-F1 and friends, confusion matrix
 │   └── error_analysis.py       what it got wrong, and how confidently
-└── inference/predictor.py      LeafPredictor.from_checkpoint(...)
+├── inference/predictor.py      LeafPredictor.from_checkpoint(...)
+├── api/
+│   ├── schemas.py              wire contract: verdicts, results, thresholds
+│   ├── service.py              upload limits, classify/flag/decline policy
+│   └── app.py                  FastAPI endpoints
+└── ui/streamlit_app.py         Streamlit client for the API
 ```
 
 Supporting directories: [configs/](configs/) (`development.yaml`,
@@ -122,6 +130,49 @@ print(prediction.is_confident(0.7))  # True
 The predictor rebuilds its preprocessing from the checkpoint's own metadata,
 so a model trained at 320px with segmentation keeps behaving that way no
 matter what the config files say later.
+
+## Web application
+
+Two processes: a FastAPI service that owns the model, and a Streamlit UI that
+talks to it over HTTP. Start the API first.
+
+```bash
+leaf-api                                                # :8000, docs at /docs
+streamlit run src/medicinal_leaf/ui/streamlit_app.py    # :8501
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Liveness, whether a model is loaded, active thresholds |
+| `POST /predict` | One image → species + confidence |
+| `POST /predict/batch` | A ZIP → one row per image, plus a summary |
+
+Every prediction gets one of four verdicts, and the response always carries a
+confidence score and the thresholds it was judged against:
+
+- **classified** — above the review threshold.
+- **needs_review** — plausible but under the bar; shown, flagged, and
+  highlighted in the UI so it can be routed to a human.
+- **unable_to_classify** — under the floor, so **no species is named at all**.
+  A confident-looking wrong answer is worse than an honest refusal.
+- **error** — the file could not be decoded. One bad file in a ZIP never
+  fails the whole upload.
+
+Both thresholds are configuration, not constants, and can be overridden per
+request:
+
+```bash
+curl -F file=@leaf.jpg "http://127.0.0.1:8000/predict?review_threshold=0.9"
+```
+
+Bulk results are exportable as CSV from the UI. Uploads are processed
+entirely in memory and never written to disk. Archives are bounded on entry
+count, per-file size, total uncompressed size, and compression ratio — an
+endpoint that unpacks ZIPs is the obvious denial-of-service target.
+
+If no checkpoint exists yet, the API still starts and `/health` reports
+`degraded`; prediction endpoints return `503` with instructions rather than
+the process crash-looping.
 
 ## Development
 
