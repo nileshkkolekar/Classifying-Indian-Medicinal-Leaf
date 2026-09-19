@@ -26,8 +26,14 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-# src/medicinal_leaf/config/settings.py -> repository root
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# src/medicinal_leaf/config/settings.py -> repository root.
+#
+# Deriving this from __file__ only holds for a source checkout or an editable
+# install. Installed normally — in a container, say — the package lives under
+# site-packages and this would point somewhere with no configs/ in it, so the
+# location is overridable. Read at import time, before any Settings exist.
+_DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(os.environ.get("MLC_PROJECT_ROOT", _DEFAULT_PROJECT_ROOT)).resolve()
 CONFIG_DIR = PROJECT_ROOT / "configs"
 
 DEFAULT_ENV = "development"
@@ -179,6 +185,33 @@ class TrainingConfig(BaseModel):
         return "cpu"
 
 
+class AWSConfig(BaseModel):
+    """Amazon S3 locations for the dataset and model artifacts (FR-1).
+
+    Everything is optional: with nothing set the pipeline works entirely from
+    local disk, which is what the tests and a laptop run do. Credentials are
+    never configured here — boto3 resolves them from the environment, an
+    instance profile or an ECS task role, so none can be committed (NFR-4).
+    """
+
+    #: ``None`` defers to AWS_REGION or the active profile.
+    region: str | None = None
+    #: Override for LocalStack or MinIO in testing; unused in production.
+    endpoint_url: str | None = None
+
+    #: ``s3://bucket/prefix`` holding one folder per species.
+    dataset_uri: str | None = None
+    #: ``s3://bucket/key`` of a trained checkpoint.
+    checkpoint_uri: str | None = None
+
+    @field_validator("dataset_uri", "checkpoint_uri")
+    @classmethod
+    def _must_be_s3_uri(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("s3://"):
+            raise ValueError(f"Expected an s3:// URI, got {value!r}")
+        return value
+
+
 class ServingConfig(BaseModel):
     """The prediction API and the Streamlit UI in front of it.
 
@@ -255,6 +288,7 @@ class Settings(BaseSettings):
     model: ModelConfig = Field(default_factory=ModelConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     serving: ServingConfig = Field(default_factory=ServingConfig)
+    aws: AWSConfig = Field(default_factory=AWSConfig)
 
     @classmethod
     def settings_customise_sources(

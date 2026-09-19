@@ -53,6 +53,7 @@ flowchart TD
 | `evaluation.metrics` | Scalar and per-class metrics, confusion plot | Reading data |
 | `evaluation.error_analysis` | What went wrong and how confidently | Computing headline metrics |
 | `inference.predictor` | Load a checkpoint, classify images | Reading `configs/` |
+| `data.s3` | Dataset and checkpoint transfer, key safety | Holding credentials |
 | `api.schemas` | The wire contract: verdicts, results, thresholds | Any logic |
 | `api.service` | Upload limits, ZIP safety, verdict policy | Knowing about HTTP |
 | `api.app` | Routing, multipart parsing, status codes | Deciding verdicts |
@@ -135,6 +136,20 @@ Nothing is written to disk at any point (NFR-8): uploads are decoded from
 memory and dropped when the request ends. Archive member names are sanitised
 for display only — traversal is structurally impossible because no path from
 the archive is ever used to open a file.
+
+### S3 is optional, and credentials are never configuration
+
+`AWSConfig` carries locations — bucket URIs and a region — and nothing else.
+Credentials are left entirely to boto3's own resolution chain, which means an
+ECS task role in production and an environment or profile locally. There is
+no field that could hold a secret, so none can be committed (NFR-4).
+
+Object keys get the same treatment as archive members: a key like
+`../../.ssh/authorized_keys` would otherwise escape the download directory,
+so `safe_destination` resolves and verifies containment before any write.
+
+Everything is optional. With no `aws.*` set, the pipeline reads local disk
+and the S3 module is never imported — boto3 lives in its own extra.
 
 ## Data contracts
 

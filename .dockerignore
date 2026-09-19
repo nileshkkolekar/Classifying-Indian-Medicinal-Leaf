@@ -1,0 +1,44 @@
+# Keep the build context small and free of anything secret or machine-local.
+# Everything the image needs is pyproject.toml, README.md, src/ and configs/.
+
+.git/
+.github/
+.venv/
+venv/
+env/
+
+# Dataset and generated output - never baked into an image.
+Data/
+artifacts/
+checkpoints/
+runs/
+logs/
+*.pt
+*.pth
+*.onnx
+
+# Secrets.
+.env
+*.pem
+*.key
+
+# Not needed at runtime.
+tests/
+notebooks/
+docs/
+*.pdf
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+coverage.xml
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,60 @@
+{
+  "family": "leaf-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "3072",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/leafEcsExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/leafEcsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "leaf-api",
+      "image": "REPLACED_BY_CD_PIPELINE",
+      "essential": true,
+      "command": ["leaf-api"],
+      "user": "10001",
+      "portMappings": [
+        {
+          "name": "api",
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "MLC_ENV", "value": "production" },
+        { "name": "MLC_PROJECT_ROOT", "value": "/app" },
+        { "name": "MLC_SERVING__HOST", "value": "0.0.0.0" },
+        { "name": "MLC_SERVING__PORT", "value": "8000" },
+        { "name": "MLC_AWS__REGION", "value": "AWS_REGION" },
+        { "name": "MLC_AWS__CHECKPOINT_URI", "value": "s3://BUCKET_NAME/models/best.pt" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/leaf-api",
+          "awslogs-region": "AWS_REGION",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "linuxParameters": {
+        "initProcessEnabled": true
+      },
+      "readonlyRootFilesystem": false,
+      "stopTimeout": 30
+    }
+  ]
+}

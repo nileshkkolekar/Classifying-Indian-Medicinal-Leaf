@@ -50,6 +50,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.predictor = None
 
+    # FR-1: in a deployed container the checkpoint usually lives in S3 rather
+    # than in the image, so fetch it before trying to load from disk.
+    if settings.aws.checkpoint_uri:
+        try:
+            from medicinal_leaf.data import s3
+
+            s3.download_checkpoint(settings)
+        except Exception:
+            logger.exception(
+                "Could not fetch the checkpoint from %s; falling back to local disk.",
+                settings.aws.checkpoint_uri,
+            )
+
     try:
         app.state.predictor = LeafPredictor.from_checkpoint(settings.serving.checkpoint_path)
         logger.info("Model ready: %s", settings.serving.checkpoint_path)

@@ -59,3 +59,28 @@ jobs:
           name: coverage
           path: coverage.xml
           if-no-files-found: ignore
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only - publishing happens in CD, after this has passed. Catches
+      # a broken Dockerfile on the pull request rather than at deploy time.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: medicinal-leaf:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the entry points
+        run: |
+          docker run --rm medicinal-leaf:ci python -c "import medicinal_leaf; print(medicinal_leaf.__version__)"
+          docker run --rm medicinal-leaf:ci python -c "from medicinal_leaf.api.app import app; print(sorted(r.path for r in app.routes))"

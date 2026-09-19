@@ -56,10 +56,14 @@ serve = [
     # The UI's HTTP client, and what starlette's TestClient runs on.
     "httpx>=0.27",
 ]
+aws = [
+    "boto3>=1.34",
+]
 
 [project.scripts]
 leaf-train = "medicinal_leaf.training.train:app"
 leaf-api = "medicinal_leaf.api.app:main"
+leaf-ui = "medicinal_leaf.ui.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

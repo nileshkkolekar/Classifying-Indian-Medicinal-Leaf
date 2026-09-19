@@ -174,6 +174,39 @@ If no checkpoint exists yet, the API still starts and `/health` reports
 `degraded`; prediction endpoints return `503` with instructions rather than
 the process crash-looping.
 
+## Docker
+
+One image, two entry points — the command decides whether a container is the
+API or the UI, so there is a single build and a single ECR repository.
+
+```bash
+docker compose up --build
+# API  http://localhost:8000/docs
+# UI   http://localhost:8501
+```
+
+Put a checkpoint at `./artifacts/checkpoints/best.pt` first, or the API
+reports `degraded`. The image installs **CPU-only** torch: the default Linux
+wheels bundle CUDA and add roughly 2 GB for hardware Fargate does not have.
+
+## AWS
+
+Optional — with no `aws.*` configuration everything runs from local disk.
+
+```bash
+leaf-train prepare --sync     # mirror the dataset from S3 first (FR-1)
+```
+
+Set `MLC_AWS__CHECKPOINT_URI` and the API downloads its model at startup
+instead of baking it into the image.
+
+Deployment targets ECS Fargate, with GitHub Actions authenticating through
+**OIDC** — no AWS keys are stored in the repository. CD triggers on CI
+succeeding on `main`, so a broken merge never reaches AWS.
+
+Full setup, IAM policies and the required GitHub secrets/variables:
+[docs/aws-deployment.md](docs/aws-deployment.md).
+
 ## Development
 
 ```bash

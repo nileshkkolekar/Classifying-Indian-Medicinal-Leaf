@@ -1,0 +1,58 @@
+{
+  "family": "leaf-ui",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/leafEcsExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/leafEcsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "leaf-ui",
+      "image": "REPLACED_BY_CD_PIPELINE",
+      "essential": true,
+      "command": ["leaf-ui"],
+      "user": "10001",
+      "portMappings": [
+        {
+          "name": "ui",
+          "containerPort": 8501,
+          "hostPort": 8501,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "MLC_ENV", "value": "production" },
+        { "name": "MLC_PROJECT_ROOT", "value": "/app" },
+        { "name": "MLC_SERVING__HOST", "value": "0.0.0.0" },
+        {
+          "name": "MLC_SERVING__API_BASE_URL",
+          "value": "http://leaf-api.leaf.local:8000"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -fsS http://127.0.0.1:8501/_stcore/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/leaf-ui",
+          "awslogs-region": "AWS_REGION",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "readonlyRootFilesystem": false,
+      "stopTimeout": 30
+    }
+  ]
+}

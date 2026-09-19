@@ -88,12 +88,23 @@ def prepare(
     check_decodable: Annotated[
         bool, typer.Option(help="Fully decode every image (slow, thorough).")
     ] = False,
+    sync: Annotated[
+        bool, typer.Option("--sync", help="Download the dataset from S3 first (FR-1).")
+    ] = False,
     verbose: bool = False,
 ) -> None:
     """Index the image tree, validate it, split it and write the manifest."""
     setup_logging(verbose)
     settings = load_settings(env)
     settings.ensure_directories()
+
+    if sync:
+        from medicinal_leaf.data import s3
+
+        typer.echo(f"Syncing {settings.aws.dataset_uri} -> {settings.data.raw_dir} ...")
+        downloaded = s3.sync_dataset(settings)
+        typer.secho(f"Downloaded {len(downloaded)} new file(s).", fg=typer.colors.GREEN)
+
     typer.echo(f"Scanning {settings.data.raw_dir} ...")
 
     frame = build_index_from_settings(settings)

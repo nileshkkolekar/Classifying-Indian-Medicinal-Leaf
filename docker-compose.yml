@@ -1,0 +1,48 @@
+# Local stand-in for the ECS deployment: the same image twice, once as the
+# API and once as the UI, on a private network.
+#
+#   docker compose up --build
+#   API  http://localhost:8000/docs
+#   UI   http://localhost:8501
+#
+# Put a trained checkpoint at ./artifacts/checkpoints/best.pt first, or the
+# API will report "degraded" and prediction calls will return 503.
+
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    image: medicinal-leaf:local
+    command: ["leaf-api"]
+    ports:
+      - "8000:8000"
+    environment:
+      MLC_ENV: production
+      MLC_SERVING__HOST: 0.0.0.0
+      MLC_SERVING__PORT: "8000"
+    volumes:
+      # Read-only: the service loads the model and never writes to it.
+      - ./artifacts:/app/artifacts:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+
+  ui:
+    image: medicinal-leaf:local
+    command: ["leaf-ui"]
+    ports:
+      - "8501:8501"
+    environment:
+      MLC_ENV: production
+      # Service name on the compose network, not localhost - the UI runs in
+      # its own container.
+      MLC_SERVING__API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
