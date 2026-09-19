@@ -1,0 +1,58 @@
+# ── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Environments ─────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+.python-version
+
+# ── Tooling caches ───────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ── Notebooks ────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Dataset ──────────────────────────────────────────────────────────────
+# Images are tracked outside git (see README "Dataset"). Keep the folder
+# itself so a fresh clone has somewhere to unpack into.
+# Ignore the contents, not the directory itself — git cannot re-include a
+# file inside a directory that is ignored wholesale.
+Data/*
+!Data/.gitkeep
+
+# ── Generated artifacts ──────────────────────────────────────────────────
+artifacts/
+checkpoints/
+runs/
+logs/
+*.pt
+*.pth
+*.onnx
+
+# ── Internal documents ───────────────────────────────────────────────────
+# The internship BRD is an internal document and the visibility of this
+# GitHub repo is not confirmed, so it stays out of version control by
+# default. Delete this rule if the document is cleared for sharing.
+*BRD*.pdf
+
+# ── OS / editor ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

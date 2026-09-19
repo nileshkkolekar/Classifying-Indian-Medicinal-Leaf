@@ -1,0 +1,4 @@
+# Images are not tracked in git. Unpack the dataset here as one folder per
+# species (Aloevera/, Amla/, Mint/, Neem/, Tulsi/), then run:
+#
+#     leaf-train prepare

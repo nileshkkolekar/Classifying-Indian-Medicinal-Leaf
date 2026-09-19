@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medicinal-leaf-classification"
+version = "0.1.0"
+description = "Image classification pipeline for Indian medicinal leaf species."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Nilesh Kolekar", email = "nilesh.kolekar@techcreants.com" }]
+keywords = ["computer-vision", "image-classification", "medicinal-plants", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "Pillow>=11.0",
+    "opencv-python>=4.10",
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "timm>=1.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+notebook = [
+    "jupyter>=1.1",
+    "ipykernel>=6.29",
+]
+
+[project.scripts]
+leaf-train = "medicinal_leaf.training.train:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# PEP 561 marker: ships the inline type hints to consumers (and lets mypy
+# type-check the package rather than skipping it as untyped).
+[tool.setuptools.package-data]
+medicinal_leaf = ["py.typed"]
+
+# ── Testing ──────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: test takes more than a couple of seconds",
+    "integration: exercises several modules end to end",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ── Linting ──────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "RET", "ARG", "PTH", "C4"]
+ignore = [
+    "E501",    # line length is enforced by the formatter
+    "N812",    # `import torch.nn.functional as F` is the community idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG001", "ARG002"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["medicinal_leaf"]
+
+# ── Typing ───────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+packages = ["medicinal_leaf"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# ── Coverage ─────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src/medicinal_leaf"]
+branch = true
+
+[tool.coverage.report]
+# BRD NFR-3 requires at least 70% coverage on core modules; CI enforces it.
+fail_under = 70
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

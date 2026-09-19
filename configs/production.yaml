@@ -1,0 +1,65 @@
+# Full training run: larger backbone, longer schedule, GPU assumptions.
+# Intended to be launched as `MLC_ENV=production leaf-train fit`.
+
+seed: 42
+
+data:
+  raw_dir: Data
+  processed_dir: artifacts/processed
+  manifest_path: artifacts/manifest.csv
+  image_extensions: [".jpg", ".jpeg", ".png"]
+  min_side: 64
+  max_aspect_ratio: 4.0
+  min_images_per_class: 25
+  max_imbalance_ratio: 3.0
+  train_size: 0.70
+  val_size: 0.15
+  test_size: 0.15
+
+preprocessing:
+  image_size: 320
+  resize_strategy: letterbox
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  # Background clutter is the dominant confounder on field-captured leaves.
+  segment_leaf: true
+  segment_pad: 12
+
+augmentation:
+  enabled: true
+  horizontal_flip: 0.5
+  vertical_flip: 0.3
+  rotation_degrees: 30.0
+  random_resized_crop_scale: [0.6, 1.0]
+  color_jitter_brightness: 0.3
+  color_jitter_contrast: 0.3
+  color_jitter_saturation: 0.3
+  color_jitter_hue: 0.03
+  random_erasing: 0.25
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  dropout: 0.3
+  freeze_backbone: false
+  unfreeze_after_epoch: null
+
+training:
+  epochs: 60
+  batch_size: 64
+  learning_rate: 0.0003
+  weight_decay: 0.0005
+  optimizer: adamw
+  scheduler: cosine
+  warmup_epochs: 3
+  label_smoothing: 0.1
+  class_weighting: true
+  gradient_clip_norm: 1.0
+  early_stopping_patience: 10
+  early_stopping_metric: val_macro_f1
+  num_workers: 8
+  pin_memory: true
+  mixed_precision: true
+  device: auto
+  checkpoint_dir: artifacts/checkpoints
+  run_dir: artifacts/runs
