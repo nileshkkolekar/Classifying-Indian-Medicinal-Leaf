@@ -100,6 +100,23 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class Token(BaseModel):
+    """An issued access token."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    username: str
+
+
+class UserInfo(BaseModel):
+    """Who the current credentials identify."""
+
+    username: str
+    kind: str
+    auth_enabled: bool
+
+
 class JobState(StrEnum):
     """Where a queued bulk job has got to."""
 

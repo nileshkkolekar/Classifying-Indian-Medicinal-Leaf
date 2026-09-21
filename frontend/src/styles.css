@@ -1,0 +1,424 @@
+/* Botanical palette: a cool, green-biased neutral rather than a plain grey,
+   with the three semantic colours mapped onto the API's verdicts so the
+   interface and the model speak the same language. */
+
+:root {
+  --ground: #f6f8f4;
+  --surface: #ffffff;
+  --sunk: #edf1ea;
+  --ink: #171d18;
+  --ink-soft: #55605a;
+  --rule: #d8dfd5;
+  --accent: #1f6f4a;
+  --accent-soft: rgba(31, 111, 74, 0.1);
+  --warn: #9a6b12;
+  --warn-soft: rgba(154, 107, 18, 0.13);
+  --crit: #9e3b2b;
+  --crit-soft: rgba(158, 59, 43, 0.12);
+
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #10140f;
+    --surface: #171c16;
+    --sunk: #1e241c;
+    --ink: #e7ede4;
+    --ink-soft: #9aa697;
+    --rule: #2b332a;
+    --accent: #6fc492;
+    --accent-soft: rgba(111, 196, 146, 0.14);
+    --warn: #d6a343;
+    --warn-soft: rgba(214, 163, 67, 0.16);
+    --crit: #e0705c;
+    --crit-soft: rgba(224, 112, 92, 0.16);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.masthead .disclaimer {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--crit);
+}
+.status-dot.ready {
+  background: var(--accent);
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 22px 0 20px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 9px 14px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn.secondary {
+  background: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="file"] {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-bottom: 5px;
+  color: var(--ink-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 20px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.hint {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.alert {
+  padding: 11px 14px;
+  border-radius: 4px;
+  border-left: 3px solid var(--crit);
+  background: var(--crit-soft);
+  font-size: 0.88rem;
+}
+.alert.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.alert.ok {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ── Verdicts ────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 11px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+.badge.classified {
+  background: var(--accent);
+}
+.badge.needs_review {
+  background: var(--warn);
+}
+.badge.unable_to_classify {
+  background: #9a6700;
+}
+.badge.error {
+  background: var(--crit);
+}
+.badge.queued,
+.badge.running {
+  background: #57606a;
+}
+.badge.succeeded {
+  background: var(--accent);
+}
+.badge.failed {
+  background: var(--crit);
+}
+.badge.cancelled {
+  background: var(--warn);
+}
+
+.verdict-headline {
+  margin: 10px 0 2px;
+  font-size: 1.8rem;
+  letter-spacing: -0.02em;
+}
+
+/* ── Prediction detail ───────────────────────────────────────────────── */
+
+.predict-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 24px;
+}
+@media (max-width: 720px) {
+  .predict-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.preview {
+  width: 100%;
+  border-radius: 5px;
+  border: 1px solid var(--rule);
+  display: block;
+}
+
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--sunk);
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.dist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 14px;
+}
+.dist-row {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr 3.2rem;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.84rem;
+}
+.dist-row .value {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--ink-soft);
+}
+
+/* ── Metrics ─────────────────────────────────────────────────────────── */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+}
+.metric {
+  background: var(--sunk);
+  border-radius: 5px;
+  padding: 11px 13px;
+}
+.metric dt {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+}
+.metric dd {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────── */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.86rem;
+  min-width: 620px;
+}
+th,
+td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+thead th {
+  background: var(--sunk);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+tr.flag-needs_review {
+  background: var(--warn-soft);
+}
+tr.flag-unable_to_classify {
+  background: rgba(154, 103, 0, 0.14);
+}
+tr.flag-error {
+  background: var(--crit-soft);
+}
+td.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+td.file {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+/* ── Login ───────────────────────────────────────────────────────────── */
+
+.login {
+  max-width: 380px;
+  margin: 8vh auto 0;
+}
+.login .panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* ── Jobs ────────────────────────────────────────────────────────────── */
+
+.job-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.84rem;
+}
+.job-row:last-child {
+  border-bottom: none;
+}
+.job-row .id {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}

@@ -5,6 +5,21 @@
 # repository and one layer cache; the ECS task definition picks which role a
 # container plays by overriding the command.
 
+# ── Frontend ─────────────────────────────────────────────────────────────
+# Built in its own stage so Node never reaches the runtime image: the final
+# container ships static files, not a JavaScript toolchain.
+FROM node:22-slim AS frontend
+
+WORKDIR /build/frontend
+
+# Dependencies first, so a source-only change reuses the install layer.
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+RUN npm run build
+
+
 # ── Builder ──────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 
@@ -54,6 +69,9 @@ COPY --from=builder --chown=leaf:leaf /opt/venv /opt/venv
 
 WORKDIR /app
 COPY --chown=leaf:leaf configs/ ./configs/
+
+# The React bundle, served by the API at "/" from the same origin.
+COPY --from=frontend --chown=leaf:leaf /build/frontend/dist ./frontend/dist
 # Somewhere for a checkpoint to be mounted or downloaded at startup.
 RUN mkdir -p /app/artifacts/checkpoints && chown -R leaf:leaf /app/artifacts
 

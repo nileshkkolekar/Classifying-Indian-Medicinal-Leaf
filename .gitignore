@@ -45,6 +45,12 @@ logs/
 *.pth
 *.onnx
 
+# ── Frontend ─────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+npm-debug.log*
+.vite/
+
 # ── Internal documents ───────────────────────────────────────────────────
 # The internship BRD is an internal document and the visibility of this
 # GitHub repo is not confirmed, so it stays out of version control by

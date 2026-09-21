@@ -55,6 +55,9 @@ serve = [
     "streamlit>=1.37",
     # The UI's HTTP client, and what starlette's TestClient runs on.
     "httpx>=0.27",
+    # Authentication: JWT signing and password hashing.
+    "PyJWT>=2.8",
+    "bcrypt>=4.1",
 ]
 aws = [
     "boto3>=1.34",
@@ -64,6 +67,7 @@ aws = [
 leaf-train = "medicinal_leaf.training.train:app"
 leaf-api = "medicinal_leaf.api.app:main"
 leaf-ui = "medicinal_leaf.ui.launcher:main"
+leaf-hash = "medicinal_leaf.api.auth:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

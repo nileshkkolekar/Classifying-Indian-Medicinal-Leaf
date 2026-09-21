@@ -20,11 +20,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 
 from medicinal_leaf import __version__
-from medicinal_leaf.api import service
+from medicinal_leaf.api import auth, service
+from medicinal_leaf.api.auth import AuthenticationError, Principal
 from medicinal_leaf.api.jobs import JobQueue, JobStore, JobWorker
 from medicinal_leaf.api.schemas import (
     BatchResult,
@@ -35,6 +38,8 @@ from medicinal_leaf.api.schemas import (
     JobStatus,
     SingleResult,
     Thresholds,
+    Token,
+    UserInfo,
 )
 
 # Imported at runtime rather than under TYPE_CHECKING: FastAPI resolves
@@ -55,6 +60,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = load_settings()
     app.state.settings = settings
     app.state.predictor = None
+
+    # Say so loudly if this deployment is open, or locked out of itself.
+    auth.warn_if_unprotected(settings)
 
     # FR-1: in a deployed container the checkpoint usually lives in S3 rather
     # than in the image, so fetch it before trying to load from disk.
@@ -116,6 +124,21 @@ async def _upload_rejected_handler(_: Request, exc: UploadRejectedError) -> JSON
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
+@app.exception_handler(AuthenticationError)
+async def _authentication_handler(_: Request, exc: AuthenticationError) -> JSONResponse:
+    """401 with the challenge header clients expect."""
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": exc.message},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+# ``auto_error=False`` so a missing header reaches our own handler, which can
+# also consider an API key, instead of FastAPI short-circuiting to 401.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+
+
 # ── Dependencies ─────────────────────────────────────────────────────────
 
 
@@ -141,6 +164,23 @@ def get_predictor(request: Request) -> SupportsPrediction:
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 PredictorDep = Annotated[SupportsPrediction, Depends(get_predictor)]
+
+
+def require_principal(
+    settings: SettingsDep,
+    token: Annotated[str | None, Depends(oauth2_scheme)] = None,
+    api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> Principal:
+    """Identify the caller, or reject the request.
+
+    Accepts either a bearer token (people, through the UI) or an API key
+    (scripts). With auth disabled every caller resolves to anonymous, which
+    keeps local development and the test suite straightforward.
+    """
+    return auth.principal_from_credentials(settings, bearer_token=token, api_key=api_key)
+
+
+PrincipalDep = Annotated[Principal, Depends(require_principal)]
 
 
 def resolve_thresholds(
@@ -217,6 +257,37 @@ def get_jobs(request: Request) -> JobQueue:
 JobsDep = Annotated[JobQueue, Depends(get_jobs)]
 
 
+# ── Authentication ───────────────────────────────────────────────────────
+
+
+@app.post("/auth/token", response_model=Token, tags=["auth"])
+def issue_token(
+    settings: SettingsDep,
+    form: Annotated[OAuth2PasswordRequestForm, Depends()],
+) -> Token:
+    """Exchange a username and password for a short-lived access token."""
+    if not settings.auth.enabled:
+        raise UploadRejectedError(
+            "Authentication is disabled on this deployment; no token is needed.",
+            status_code=404,
+        )
+
+    principal = auth.authenticate(form.username, form.password, settings)
+    token, expires_in = auth.create_access_token(principal.name, settings)
+    logger.info("Issued a token for %s", principal.name)
+    return Token(access_token=token, expires_in=expires_in, username=principal.name)
+
+
+@app.get("/auth/me", response_model=UserInfo, tags=["auth"])
+def whoami(settings: SettingsDep, principal: PrincipalDep) -> UserInfo:
+    """Who the supplied credentials identify. Useful for a UI session check."""
+    return UserInfo(
+        username=principal.name,
+        kind=principal.kind,
+        auth_enabled=settings.auth.enabled,
+    )
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 
@@ -241,6 +312,7 @@ def health(settings: SettingsDep, request: Request) -> HealthResponse:
 async def predict(
     settings: SettingsDep,
     predictor: PredictorDep,
+    _principal: PrincipalDep,
     file: Annotated[UploadFile, File(description="A single leaf image (JPG or PNG).")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
@@ -268,6 +340,7 @@ async def predict(
 async def predict_batch(
     settings: SettingsDep,
     predictor: PredictorDep,
+    _principal: PrincipalDep,
     file: Annotated[UploadFile, File(description="A ZIP archive of leaf images.")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
@@ -317,6 +390,7 @@ async def submit_job(
     settings: SettingsDep,
     jobs: JobsDep,
     predictor: PredictorDep,  # noqa: ARG001 - fail fast if no model is loaded
+    principal: PrincipalDep,
     file: Annotated[UploadFile, File(description="A ZIP archive of leaf images.")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
@@ -357,7 +431,7 @@ async def submit_job(
         jobs.store.delete(record.job_id)
         raise
 
-    logger.info("Queued job %s (%d images)", record.job_id, record.total)
+    logger.info("Queued job %s for %s (%d images)", record.job_id, principal.name, record.total)
     return JobAccepted(
         job_id=record.job_id,
         state=record.state,
@@ -368,13 +442,17 @@ async def submit_job(
 
 
 @app.get("/jobs", response_model=JobList, tags=["jobs"])
-def list_jobs(jobs: JobsDep, limit: Annotated[int, Query(ge=1, le=200)] = 25) -> JobList:
+def list_jobs(
+    jobs: JobsDep,
+    _principal: PrincipalDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 25,
+) -> JobList:
     """Recent jobs, newest first."""
     return JobList(jobs=[record.to_status() for record in jobs.store.list(limit)])
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus, tags=["jobs"])
-def job_status(jobs: JobsDep, job_id: str) -> JobStatus:
+def job_status(jobs: JobsDep, _principal: PrincipalDep, job_id: str) -> JobStatus:
     """Progress and outcome for one job. Poll this while it runs."""
     record = jobs.store.get(job_id)
     if record is None:
@@ -383,7 +461,7 @@ def job_status(jobs: JobsDep, job_id: str) -> JobStatus:
 
 
 @app.get("/jobs/{job_id}/results", tags=["jobs"])
-def job_results(jobs: JobsDep, job_id: str) -> FileResponse:
+def job_results(jobs: JobsDep, _principal: PrincipalDep, job_id: str) -> FileResponse:
     """Download the results CSV: one row per image (FR-11)."""
     record = jobs.store.get(job_id)
     if record is None:
@@ -403,7 +481,7 @@ def job_results(jobs: JobsDep, job_id: str) -> FileResponse:
 
 
 @app.delete("/jobs/{job_id}", tags=["jobs"])
-def delete_job(jobs: JobsDep, job_id: str) -> dict[str, str]:
+def delete_job(jobs: JobsDep, _principal: PrincipalDep, job_id: str) -> dict[str, str]:
     """Cancel a job if it is still running, and remove everything it wrote."""
     record = jobs.store.get(job_id)
     if record is None:
@@ -417,6 +495,33 @@ def delete_job(jobs: JobsDep, job_id: str) -> dict[str, str]:
 
     jobs.store.delete(job_id)
     return {"job_id": job_id, "state": record.state.value, "detail": "Deleted."}
+
+
+# ── Static frontend ──────────────────────────────────────────────────────
+#
+# Mounted last, so every API route above is matched first and only unclaimed
+# paths fall through to the bundle. Serving the app from the API's own origin
+# means the browser never makes a cross-origin request, so there is no CORS
+# policy to write, loosen under deadline pressure, and get wrong.
+#
+# Absent in a checkout that has not run `npm run build`; the API then serves
+# JSON only, which is exactly what CI and the test suite exercise.
+def mount_frontend(application: FastAPI, directory: Path) -> bool:
+    if not directory.is_dir():
+        logger.info("No built frontend at %s; serving the API only.", directory)
+        return False
+
+    application.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+    logger.info("Serving the React bundle from %s", directory)
+    return True
+
+
+try:
+    mount_frontend(app, load_settings().serving.frontend_dir)
+except Exception:  # pragma: no cover - configuration is validated elsewhere
+    # Never let a UI problem stop the API from importing; the JSON surface is
+    # what matters and /health has to keep answering.
+    logger.exception("Could not mount the frontend; serving the API only.")
 
 
 def main() -> None:

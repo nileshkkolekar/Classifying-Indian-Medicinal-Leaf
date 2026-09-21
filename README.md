@@ -133,13 +133,47 @@ matter what the config files say later.
 
 ## Web application
 
-Two processes: a FastAPI service that owns the model, and a Streamlit UI that
-talks to it over HTTP. Start the API first.
+A React client, built to static assets and served by FastAPI itself — one
+process, one origin, so there is no CORS policy to configure or get wrong.
 
 ```bash
-leaf-api                                                # :8000, docs at /docs
-streamlit run src/medicinal_leaf/ui/streamlit_app.py    # :8501
+cd frontend && npm ci && npm run build && cd ..
+leaf-api          # http://127.0.0.1:8000 — app at /, API docs at /docs
 ```
+
+For frontend work, Vite's dev server proxies the API paths:
+
+```bash
+leaf-api                       # terminal 1
+cd frontend && npm run dev     # terminal 2 — http://localhost:5173
+```
+
+A Streamlit UI (`leaf-ui`) is still present and tested; React is the primary
+client.
+
+### Authentication
+
+Prediction and job endpoints require credentials. `/health` stays public so
+load-balancer and ECS probes work.
+
+```bash
+leaf-hash                 # generate MLC_AUTH__USERS and a signing key
+leaf-hash --api-key       # generate a machine key
+```
+
+People sign in through the UI and get a short-lived JWT; scripts send
+`X-API-Key` instead:
+
+```bash
+curl -H "X-API-Key: leaf_..." -F file=@leaf.jpg http://127.0.0.1:8000/predict
+```
+
+Passwords are stored as bcrypt hashes and API keys as SHA-256 digests, both
+supplied through the environment — no credential ever reaches git. Auth is
+**off in `development.yaml`** for a frictionless local loop and **on in
+`production.yaml`**, which is what the Docker image runs. In production a
+missing `MLC_AUTH__SECRET_KEY` is fatal rather than invented: a per-replica
+random key would differ between instances and reset every deploy.
 
 | Endpoint | Purpose |
 | --- | --- |

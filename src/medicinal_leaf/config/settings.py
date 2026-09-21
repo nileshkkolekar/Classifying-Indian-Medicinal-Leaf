@@ -185,6 +185,38 @@ class TrainingConfig(BaseModel):
         return "cpu"
 
 
+class AuthConfig(BaseModel):
+    """Bearer-token authentication for the prediction endpoints.
+
+    Credentials never appear here in plaintext: ``users`` maps a username to a
+    bcrypt hash, and ``api_key_sha256`` holds digests rather than the keys
+    themselves. Both are supplied through the environment, so nothing
+    sensitive reaches git (NFR-4).
+
+    Generate the values with ``leaf-hash``.
+    """
+
+    #: Secure by default. Turning this off leaves uploads open to anyone who
+    #: can reach the port.
+    enabled: bool = True
+
+    #: HMAC signing key. Empty is tolerated in development (an ephemeral key
+    #: is generated) but refused in production — see ``auth.resolve_secret``.
+    secret_key: str = ""
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = Field(default=60, ge=1)
+
+    #: username -> bcrypt hash, e.g. {"admin": "$2b$12$..."}
+    users: dict[str, str] = Field(default_factory=dict)
+
+    #: SHA-256 hex digests of machine API keys, sent as ``X-API-Key``.
+    #: High-entropy keys do not need a slow hash the way passwords do.
+    api_key_sha256: list[str] = Field(default_factory=list)
+
+    #: Left open so ECS and load-balancer health probes work unauthenticated.
+    public_paths: tuple[str, ...] = ("/health", "/auth/token", "/docs", "/openapi.json", "/redoc")
+
+
 class QueueConfig(BaseModel):
     """The asynchronous bulk pipeline.
 
@@ -288,7 +320,13 @@ class ServingConfig(BaseModel):
     api_base_url: str = "http://127.0.0.1:8000"
     request_timeout_seconds: float = Field(default=120.0, gt=0.0)
 
-    @field_validator("checkpoint_path")
+    #: Built React bundle. When this directory exists the API serves it at
+    #: "/", so the app and its API share an origin and no CORS policy exists
+    #: to misconfigure. Absent — an un-built checkout — the API serves JSON
+    #: only, which is what CI and the test suite exercise.
+    frontend_dir: Path = Path("frontend/dist")
+
+    @field_validator("checkpoint_path", "frontend_dir")
     @classmethod
     def _resolve(cls, value: Path) -> Path:
         return _absolutize(value)
@@ -332,6 +370,7 @@ class Settings(BaseSettings):
     model: ModelConfig = Field(default_factory=ModelConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     serving: ServingConfig = Field(default_factory=ServingConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     queue: QueueConfig = Field(default_factory=QueueConfig)
     aws: AWSConfig = Field(default_factory=AWSConfig)
 

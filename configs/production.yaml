@@ -82,6 +82,14 @@ serving:
   api_base_url: http://127.0.0.1:8000
   request_timeout_seconds: 300.0
 
+auth:
+  enabled: true
+  # Shorter window than development: a leaked token stays useful for less time.
+  access_token_expire_minutes: 30
+  # MLC_AUTH__SECRET_KEY, MLC_AUTH__USERS and MLC_AUTH__API_KEY_SHA256 come
+  # from the environment. Startup FAILS here if the secret key is unset —
+  # an invented key would differ per replica and reset on every deploy.
+
 queue:
   enabled: true
   job_dir: artifacts/jobs

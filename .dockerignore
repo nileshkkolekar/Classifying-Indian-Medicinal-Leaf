@@ -22,6 +22,11 @@ logs/
 *.pem
 *.key
 
+# The frontend source IS needed - the image builds it - but never the host's
+# node_modules (platform-specific) or a stale local build.
+frontend/node_modules/
+frontend/dist/
+
 # Not needed at runtime.
 tests/
 notebooks/

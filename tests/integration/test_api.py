@@ -27,6 +27,9 @@ def client(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("MLC_SERVING__CHECKPOINT_PATH", str(tmp_path / "absent.pt"))
     monkeypatch.setenv("MLC_QUEUE__JOB_DIR", str(tmp_path / "jobs"))
+    # Authentication has its own test module; switching it off here keeps
+    # these tests about prediction behaviour rather than credentials.
+    monkeypatch.setenv("MLC_AUTH__ENABLED", "false")
     monkeypatch.delenv("MLC_AWS__CHECKPOINT_URI", raising=False)
 
     with TestClient(app) as test_client:

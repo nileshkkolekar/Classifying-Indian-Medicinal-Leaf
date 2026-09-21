@@ -79,6 +79,15 @@ serving:
   api_base_url: http://127.0.0.1:8000
   request_timeout_seconds: 120.0
 
+auth:
+  # Off locally so the dev loop stays frictionless. production.yaml turns it
+  # on, and the Dockerfile sets MLC_ENV=production — so a deployed container
+  # is authenticated even though your laptop is not.
+  enabled: false
+  access_token_expire_minutes: 60
+  # secret_key, users and api_key_sha256 are supplied through the
+  # environment only. Generate them with `leaf-hash`.
+
 queue:
   enabled: true
   job_dir: artifacts/jobs

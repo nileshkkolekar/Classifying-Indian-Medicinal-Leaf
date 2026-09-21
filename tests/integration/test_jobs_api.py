@@ -28,6 +28,7 @@ def job_client(tmp_path, monkeypatch, stub_predictor):
     """
     monkeypatch.setenv("MLC_QUEUE__JOB_DIR", str(tmp_path / "jobs"))
     monkeypatch.setenv("MLC_QUEUE__CHUNK_SIZE", "4")
+    monkeypatch.setenv("MLC_AUTH__ENABLED", "false")
 
     from medicinal_leaf.api.app import app, get_predictor
 
