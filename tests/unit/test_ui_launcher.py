@@ -37,3 +37,9 @@ def test_command_is_headless():
     command = build_command("0.0.0.0", DEFAULT_UI_PORT)
     assert command[command.index("--server.headless") + 1] == "true"
     assert command[command.index("--browser.gatherUsageStats") + 1] == "false"
+
+
+def test_command_raises_the_upload_ceiling():
+    """Streamlit defaults to 200 MB, which would reject bulk archives."""
+    command = build_command("0.0.0.0", DEFAULT_UI_PORT, max_upload_mb=1024)
+    assert command[command.index("--server.maxUploadSize") + 1] == "1024"

@@ -98,3 +98,55 @@ class ErrorResponse(BaseModel):
     """Body returned for a rejected upload."""
 
     detail: str
+
+
+class JobState(StrEnum):
+    """Where a queued bulk job has got to."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED}
+
+
+class JobStatus(BaseModel):
+    """A bulk job's progress and outcome."""
+
+    job_id: str
+    state: JobState
+    filename: str
+    #: Images the archive holds, counted from the central directory up front.
+    total: int = 0
+    processed: int = 0
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    summary: BatchSummary = Field(default_factory=BatchSummary)
+    thresholds: Thresholds
+    #: Populated only when ``state`` is ``failed``.
+    error: str | None = None
+
+    @property
+    def percent(self) -> float:
+        return 100.0 * self.processed / self.total if self.total else 0.0
+
+
+class JobAccepted(BaseModel):
+    """Returned by the submit endpoint, before any work has been done."""
+
+    job_id: str
+    state: JobState
+    total: int
+    status_url: str
+    results_url: str
+
+
+class JobList(BaseModel):
+    """Recent jobs, newest first."""
+
+    jobs: list[JobStatus] = Field(default_factory=list)

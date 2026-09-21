@@ -145,7 +145,11 @@ streamlit run src/medicinal_leaf/ui/streamlit_app.py    # :8501
 | --- | --- |
 | `GET /health` | Liveness, whether a model is loaded, active thresholds |
 | `POST /predict` | One image → species + confidence |
-| `POST /predict/batch` | A ZIP → one row per image, plus a summary |
+| `POST /predict/batch` | A small ZIP → one row per image, answered immediately |
+| `POST /jobs` | A large ZIP → `202` + job id, processed in the background |
+| `GET /jobs/{id}` | State, progress and running counts |
+| `GET /jobs/{id}/results` | Download the results CSV |
+| `GET /jobs` · `DELETE /jobs/{id}` | List recent jobs; cancel or delete one |
 
 Every prediction gets one of four verdicts, and the response always carries a
 confidence score and the thresholds it was judged against:
@@ -165,10 +169,46 @@ request:
 curl -F file=@leaf.jpg "http://127.0.0.1:8000/predict?review_threshold=0.9"
 ```
 
-Bulk results are exportable as CSV from the UI. Uploads are processed
-entirely in memory and never written to disk. Archives are bounded on entry
-count, per-file size, total uncompressed size, and compression ratio — an
-endpoint that unpacks ZIPs is the obvious denial-of-service target.
+Bulk results are exportable as CSV. Archives are bounded on entry count,
+per-file size, total uncompressed size, and compression ratio — an endpoint
+that unpacks ZIPs is the obvious denial-of-service target.
+
+### Bulk at scale
+
+Thousands of images take minutes of CPU, which outlives any sane HTTP
+timeout, so large archives go through a queue instead:
+
+```bash
+curl -F file=@leaves.zip http://127.0.0.1:8000/jobs      # → 202 + job_id
+curl http://127.0.0.1:8000/jobs/<job_id>                 # poll
+curl -o results.csv http://127.0.0.1:8000/jobs/<job_id>/results
+```
+
+The UI's bulk tab does the same thing with a live progress bar; pick
+**Queued** rather than **Immediate**.
+
+| | `POST /predict/batch` | `POST /jobs` |
+| --- | --- | --- |
+| Archive | 100 MB | 5 GB (10 GB prod) |
+| Images | 200 | 20,000 (50,000 prod) |
+| Answer | in the response | poll, then download CSV |
+
+Images are decoded, predicted and released **a chunk at a time**, budgeted by
+megapixels rather than file count — decoded RGB runs about 10× its compressed
+size, so counting files bounds nothing. Peak memory tracks the chunk, not the
+upload: a 5 GB archive costs the same as a 50 MB one.
+
+The uploaded archive is streamed to disk rather than held in memory, and
+deleted the moment the job ends (NFR-8). Results stream to CSV as they are
+produced, so a crash leaves the completed rows intact.
+
+Two limits worth knowing: **one worker processes jobs sequentially** (torch
+already saturates the cores, so parallel jobs would only slow each other),
+and **the queue is in-process** — jobs survive a restart but are not shared
+between replicas. More than one API instance needs SQS or Redis behind the
+same interface. The browser upload is also capped well below the API's own
+limit, because Streamlit buffers uploads in memory; genuinely huge archives
+should be POSTed to `/jobs` directly.
 
 If no checkpoint exists yet, the API still starts and `/health` reports
 `degraded`; prediction endpoints return `503` with instructions rather than

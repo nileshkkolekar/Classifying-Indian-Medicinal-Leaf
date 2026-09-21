@@ -78,3 +78,21 @@ serving:
   allowed_extensions: [".jpg", ".jpeg", ".png"]
   api_base_url: http://127.0.0.1:8000
   request_timeout_seconds: 120.0
+
+queue:
+  enabled: true
+  job_dir: artifacts/jobs
+  max_queued_jobs: 16
+  # Memory is bounded by the chunk, not the upload. The megapixel budget is
+  # the real ceiling: decoded RGB runs ~10x its compressed size, and image
+  # dimensions vary by two orders of magnitude.
+  chunk_size: 32
+  max_chunk_megapixels: 256.0
+  # Far larger than the synchronous endpoint, because a job answers later.
+  max_archive_bytes: 5368709120
+  max_zip_entries: 20000
+  max_zip_uncompressed_bytes: 21474836480
+  retention_hours: 24.0
+  # Streamlit buffers uploads in RAM, so the browser path is capped well
+  # below the API's own limit.
+  ui_max_upload_mb: 1024

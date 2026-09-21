@@ -81,3 +81,16 @@ serving:
   allowed_extensions: [".jpg", ".jpeg", ".png"]
   api_base_url: http://127.0.0.1:8000
   request_timeout_seconds: 300.0
+
+queue:
+  enabled: true
+  job_dir: artifacts/jobs
+  max_queued_jobs: 32
+  chunk_size: 64
+  # Fargate tasks are sized 3 GB; keep a chunk well inside that.
+  max_chunk_megapixels: 512.0
+  max_archive_bytes: 10737418240
+  max_zip_entries: 50000
+  max_zip_uncompressed_bytes: 107374182400
+  retention_hours: 72.0
+  ui_max_upload_mb: 2048

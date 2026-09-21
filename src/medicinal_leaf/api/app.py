@@ -17,16 +17,22 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse
 
 from medicinal_leaf import __version__
 from medicinal_leaf.api import service
+from medicinal_leaf.api.jobs import JobQueue, JobStore, JobWorker
 from medicinal_leaf.api.schemas import (
     BatchResult,
     HealthResponse,
+    JobAccepted,
+    JobList,
+    JobState,
+    JobStatus,
     SingleResult,
     Thresholds,
 )
@@ -75,8 +81,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("Failed to load the checkpoint; prediction endpoints will return 503.")
 
+    # Bulk jobs outlive a request, so the store is on disk and survives a
+    # restart. Anything caught mid-flight by the last shutdown is failed
+    # rather than left "running" forever for a client that is still polling.
+    store = JobStore(settings.queue.job_dir)
+    store.fail_interrupted()
+    store.purge_expired(settings.queue.retention_hours)
+
+    app.state.jobs = JobQueue(store, settings.queue.max_queued_jobs)
+    app.state.worker = JobWorker(app.state.jobs, settings, lambda: app.state.predictor)
+    if settings.queue.enabled:
+        app.state.worker.start()
+
     yield
 
+    await app.state.worker.stop()
     app.state.predictor = None
 
 
@@ -159,6 +178,43 @@ async def read_capped(upload: UploadFile, limit: int, what: str) -> bytes:
     if total == 0:
         raise UploadRejectedError(f"{what} is empty.")
     return b"".join(chunks)
+
+
+async def spool_upload(upload: UploadFile, destination: Path, limit: int, what: str) -> int:
+    """Stream an upload straight to disk, aborting past ``limit``.
+
+    The queued path never materialises the archive in memory — a 5 GB ZIP
+    would not fit. It is written once, read back entry by entry, and deleted
+    when the job finishes.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    try:
+        with destination.open("wb") as handle:
+            while chunk := await upload.read(_UPLOAD_CHUNK):
+                total += len(chunk)
+                if total > limit:
+                    raise UploadRejectedError(
+                        f"{what} exceeds the {limit / 1073741824:.1f} GB limit.",
+                        status_code=413,
+                    )
+                handle.write(chunk)
+        if total == 0:
+            raise UploadRejectedError(f"{what} is empty.")
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return total
+
+
+def get_jobs(request: Request) -> JobQueue:
+    queue: JobQueue | None = getattr(request.app.state, "jobs", None)
+    if queue is None:
+        raise UploadRejectedError("The job queue is not available.", status_code=503)
+    return queue
+
+
+JobsDep = Annotated[JobQueue, Depends(get_jobs)]
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────
@@ -246,6 +302,121 @@ async def predict_batch(
         summary=service.summarize(results),
         thresholds=thresholds,
     )
+
+
+# ── Bulk jobs ────────────────────────────────────────────────────────────
+
+
+@app.post(
+    "/jobs",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["jobs"],
+)
+async def submit_job(
+    settings: SettingsDep,
+    jobs: JobsDep,
+    predictor: PredictorDep,  # noqa: ARG001 - fail fast if no model is loaded
+    file: Annotated[UploadFile, File(description="A ZIP archive of leaf images.")],
+    review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
+    unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
+) -> JobAccepted:
+    """Queue a large archive for background classification.
+
+    Returns immediately with a job id. Use this instead of ``/predict/batch``
+    when the archive is big enough that a synchronous response would time
+    out — thousands of images take minutes of CPU, not seconds.
+    """
+    thresholds = resolve_thresholds(settings, review_threshold, unknown_threshold)
+    record = jobs.store.create(service.display_name(file.filename or "upload.zip"), thresholds)
+
+    try:
+        await spool_upload(
+            file,
+            jobs.store.archive_path(record.job_id),
+            settings.queue.max_archive_bytes,
+            "Archive",
+        )
+        # Counting from the central directory validates the archive and gives
+        # the client a denominator to show progress against, without
+        # decompressing anything.
+        record.total = service.count_zip_images(
+            jobs.store.archive_path(record.job_id),
+            ZipLimits(
+                allowed_extensions=settings.serving.allowed_extensions,
+                max_entries=settings.queue.max_zip_entries,
+                max_uncompressed_bytes=settings.queue.max_zip_uncompressed_bytes,
+                max_file_bytes=settings.serving.max_image_bytes,
+                max_compression_ratio=settings.serving.max_compression_ratio,
+            ),
+        )
+        jobs.store.save(record)
+        jobs.submit(record)
+    except Exception:
+        # Never leave an orphaned directory or upload behind a failed submit.
+        jobs.store.delete(record.job_id)
+        raise
+
+    logger.info("Queued job %s (%d images)", record.job_id, record.total)
+    return JobAccepted(
+        job_id=record.job_id,
+        state=record.state,
+        total=record.total,
+        status_url=f"/jobs/{record.job_id}",
+        results_url=f"/jobs/{record.job_id}/results",
+    )
+
+
+@app.get("/jobs", response_model=JobList, tags=["jobs"])
+def list_jobs(jobs: JobsDep, limit: Annotated[int, Query(ge=1, le=200)] = 25) -> JobList:
+    """Recent jobs, newest first."""
+    return JobList(jobs=[record.to_status() for record in jobs.store.list(limit)])
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatus, tags=["jobs"])
+def job_status(jobs: JobsDep, job_id: str) -> JobStatus:
+    """Progress and outcome for one job. Poll this while it runs."""
+    record = jobs.store.get(job_id)
+    if record is None:
+        raise UploadRejectedError(f"No job {job_id}.", status_code=404)
+    return record.to_status()
+
+
+@app.get("/jobs/{job_id}/results", tags=["jobs"])
+def job_results(jobs: JobsDep, job_id: str) -> FileResponse:
+    """Download the results CSV: one row per image (FR-11)."""
+    record = jobs.store.get(job_id)
+    if record is None:
+        raise UploadRejectedError(f"No job {job_id}.", status_code=404)
+
+    path = jobs.store.results_path(job_id)
+    if not path.is_file():
+        raise UploadRejectedError(
+            f"Job {job_id} is {record.state.value}; no results yet.",
+            status_code=409,
+        )
+    return FileResponse(
+        path,
+        media_type="text/csv",
+        filename=f"{Path(record.filename).stem or 'results'}_{job_id[:8]}.csv",
+    )
+
+
+@app.delete("/jobs/{job_id}", tags=["jobs"])
+def delete_job(jobs: JobsDep, job_id: str) -> dict[str, str]:
+    """Cancel a job if it is still running, and remove everything it wrote."""
+    record = jobs.store.get(job_id)
+    if record is None:
+        raise UploadRejectedError(f"No job {job_id}.", status_code=404)
+
+    if not record.state.is_terminal:
+        # The worker checks this between chunks; it cannot be interrupted
+        # mid-batch, so cancellation takes effect within one chunk.
+        jobs.cancel(job_id)
+        return {"job_id": job_id, "state": JobState.CANCELLED.value, "detail": "Cancelling."}
+
+    jobs.store.delete(job_id)
+    return {"job_id": job_id, "state": record.state.value, "detail": "Deleted."}
 
 
 def main() -> None:

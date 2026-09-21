@@ -27,7 +27,7 @@ def app_path() -> Path:
     return Path(__file__).with_name("streamlit_app.py")
 
 
-def build_command(host: str, port: int) -> list[str]:
+def build_command(host: str, port: int, max_upload_mb: int = 1024) -> list[str]:
     """The argv Streamlit is launched with."""
     return [
         sys.executable,
@@ -39,6 +39,10 @@ def build_command(host: str, port: int) -> list[str]:
         host,
         "--server.port",
         str(port),
+        # Streamlit's own default is 200 MB, which would reject bulk archives
+        # before they ever reached the API.
+        "--server.maxUploadSize",
+        str(max_upload_mb),
         # Containers have no browser to open, and the prompt blocks startup.
         "--server.headless",
         "true",
@@ -48,9 +52,13 @@ def build_command(host: str, port: int) -> list[str]:
 
 
 def main() -> None:
-    """Launch the UI, inheriting host and port from configuration."""
+    """Launch the UI, inheriting host, port and upload limit from config."""
     settings = load_settings()
-    command = build_command(settings.serving.host, DEFAULT_UI_PORT)
+    command = build_command(
+        settings.serving.host,
+        DEFAULT_UI_PORT,
+        settings.queue.ui_max_upload_mb,
+    )
     sys.exit(subprocess.call(command))
 
 

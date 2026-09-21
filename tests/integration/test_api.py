@@ -17,8 +17,18 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def client():
-    """A client with lifespan run — no model loaded unless one is injected."""
+def client(tmp_path, monkeypatch):
+    """A client with lifespan run and deliberately no model loaded.
+
+    The checkpoint path is pointed at a file that does not exist, so these
+    tests behave identically whether or not a model has been trained on this
+    machine. Without that they assert on ambient filesystem state and start
+    failing the moment someone runs `leaf-train fit`.
+    """
+    monkeypatch.setenv("MLC_SERVING__CHECKPOINT_PATH", str(tmp_path / "absent.pt"))
+    monkeypatch.setenv("MLC_QUEUE__JOB_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("MLC_AWS__CHECKPOINT_URI", raising=False)
+
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

@@ -185,6 +185,50 @@ class TrainingConfig(BaseModel):
         return "cpu"
 
 
+class QueueConfig(BaseModel):
+    """The asynchronous bulk pipeline.
+
+    The synchronous ``/predict/batch`` endpoint has to answer inside an HTTP
+    timeout, so its limits stay small. Queued jobs answer later, which is what
+    makes gigabyte archives workable — the limits here are correspondingly
+    larger, and memory is bounded by the chunk rather than the upload.
+    """
+
+    enabled: bool = True
+    #: Where spooled uploads, job records and result CSVs live.
+    job_dir: Path = Path("artifacts/jobs")
+
+    #: Jobs waiting to start. Submissions past this are refused with 429
+    #: rather than queued forever.
+    max_queued_jobs: int = Field(default=16, ge=1)
+
+    #: Images decoded at once, and the hard pixel ceiling on a chunk. The
+    #: megapixel budget is what actually bounds memory — decoded RGB runs
+    #: about 10x its compressed size, and image dimensions vary hugely.
+    chunk_size: int = Field(default=32, ge=1)
+    max_chunk_megapixels: float = Field(default=256.0, gt=0.0)
+
+    # Async upload limits, far above the synchronous ones.
+    max_archive_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=1)
+    max_zip_entries: int = Field(default=20_000, ge=1)
+    max_zip_uncompressed_bytes: int = Field(default=20 * 1024 * 1024 * 1024, ge=1)
+
+    #: Finished jobs and their CSVs are purged after this long. The uploaded
+    #: archive is deleted as soon as the job ends, not at expiry (NFR-8).
+    retention_hours: float = Field(default=24.0, gt=0.0)
+
+    #: Upload ceiling for the Streamlit UI, deliberately far below
+    #: ``max_archive_bytes``. Streamlit buffers an upload in memory before it
+    #: ever reaches the API, so the browser path cannot carry what the API
+    #: itself can — genuinely huge archives go to POST /jobs directly.
+    ui_max_upload_mb: int = Field(default=1024, ge=1)
+
+    @field_validator("job_dir")
+    @classmethod
+    def _resolve(cls, value: Path) -> Path:
+        return _absolutize(value)
+
+
 class AWSConfig(BaseModel):
     """Amazon S3 locations for the dataset and model artifacts (FR-1).
 
@@ -288,6 +332,7 @@ class Settings(BaseSettings):
     model: ModelConfig = Field(default_factory=ModelConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     serving: ServingConfig = Field(default_factory=ServingConfig)
+    queue: QueueConfig = Field(default_factory=QueueConfig)
     aws: AWSConfig = Field(default_factory=AWSConfig)
 
     @classmethod

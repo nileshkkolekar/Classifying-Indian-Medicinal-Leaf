@@ -17,9 +17,10 @@ from __future__ import annotations
 import io
 import logging
 import zipfile
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Protocol
+from pathlib import Path, PurePosixPath
+from typing import IO, TYPE_CHECKING, Protocol
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -123,85 +124,139 @@ def decode_image(data: bytes) -> Image.Image:
         raise ValueError(str(exc) or type(exc).__name__) from exc
 
 
-def safe_zip_entries(data: bytes, limits: ZipLimits) -> list[tuple[str, bytes]]:
-    """Return ``(name, bytes)`` for every acceptable image in the archive.
+#: Anything ``zipfile`` can open: raw bytes, a path, or an open file object.
+ZipSource = bytes | str | Path | IO[bytes]
 
-    Every limit is checked against the central directory *before* any entry is
-    decompressed, then the read itself is capped in case the header lied.
+
+def _open_archive(source: ZipSource) -> zipfile.ZipFile:
+    """Open a ZIP from bytes, a path, or a file handle.
+
+    Accepting a handle is what lets a multi-gigabyte upload be read from its
+    spooled temp file instead of being copied into memory first.
     """
+    if isinstance(source, bytes):
+        source = io.BytesIO(source)
     try:
-        archive = zipfile.ZipFile(io.BytesIO(data))
+        return zipfile.ZipFile(source)
     except zipfile.BadZipFile as exc:
         raise UploadRejectedError(f"Not a readable ZIP archive: {exc}") from exc
 
-    with archive:
-        candidates = []
-        for info in archive.infolist():
-            if info.is_dir() or "__MACOSX" in info.filename:
-                continue
-            name = display_name(info.filename)
-            if PurePosixPath(name).name.startswith("."):
-                continue
-            if PurePosixPath(name).suffix.lower() not in limits.allowed_extensions:
-                continue
-            candidates.append((info, name))
 
-        if not candidates:
-            allowed = ", ".join(limits.allowed_extensions)
-            raise UploadRejectedError(f"The archive contains no images ({allowed}).")
+def _vet_candidates(
+    archive: zipfile.ZipFile, limits: ZipLimits
+) -> list[tuple[zipfile.ZipInfo, str]]:
+    """Select the image members and check every limit that can be checked early.
 
-        if len(candidates) > limits.max_entries:
+    All of this reads the central directory only — nothing is decompressed, so
+    an oversized or bomb-shaped archive is rejected before it costs anything.
+    """
+    candidates: list[tuple[zipfile.ZipInfo, str]] = []
+    for info in archive.infolist():
+        if info.is_dir() or "__MACOSX" in info.filename:
+            continue
+        name = display_name(info.filename)
+        if PurePosixPath(name).name.startswith("."):
+            continue
+        if PurePosixPath(name).suffix.lower() not in limits.allowed_extensions:
+            continue
+        candidates.append((info, name))
+
+    if not candidates:
+        allowed = ", ".join(limits.allowed_extensions)
+        raise UploadRejectedError(f"The archive contains no images ({allowed}).")
+
+    if len(candidates) > limits.max_entries:
+        raise UploadRejectedError(
+            f"Archive holds {len(candidates)} images, over the "
+            f"{limits.max_entries} per-upload limit.",
+            status_code=413,
+        )
+
+    declared_total = sum(info.file_size for info, _ in candidates)
+    if declared_total > limits.max_uncompressed_bytes:
+        raise UploadRejectedError(
+            f"Archive expands to {declared_total / 1048576:.0f} MB, over the "
+            f"{limits.max_uncompressed_bytes / 1048576:.0f} MB limit.",
+            status_code=413,
+        )
+
+    for info, name in candidates:
+        if info.file_size > limits.max_file_bytes:
             raise UploadRejectedError(
-                f"Archive holds {len(candidates)} images, over the "
-                f"{limits.max_entries} per-upload limit.",
+                f"{name} is {info.file_size / 1048576:.1f} MB, over the "
+                f"{limits.max_file_bytes / 1048576:.0f} MB per-image limit.",
+                status_code=413,
+            )
+        ratio = info.file_size / max(info.compress_size, 1)
+        if ratio > limits.max_compression_ratio:
+            raise UploadRejectedError(
+                f"{name} expands {ratio:.0f}x, above the "
+                f"{limits.max_compression_ratio:.0f}x limit; refusing as a possible zip bomb.",
                 status_code=413,
             )
 
-        declared_total = sum(info.file_size for info, _ in candidates)
-        if declared_total > limits.max_uncompressed_bytes:
-            raise UploadRejectedError(
-                f"Archive expands to {declared_total / 1048576:.0f} MB, over the "
-                f"{limits.max_uncompressed_bytes / 1048576:.0f} MB limit.",
-                status_code=413,
-            )
+    return candidates
 
-        entries: list[tuple[str, bytes]] = []
+
+def count_zip_images(source: ZipSource, limits: ZipLimits) -> int:
+    """How many images the archive holds, without decompressing any of them.
+
+    Lets a queued job report a total to count progress against before the
+    first image is touched.
+    """
+    with _open_archive(source) as archive:
+        return len(_vet_candidates(archive, limits))
+
+
+def iter_zip_entries(source: ZipSource, limits: ZipLimits) -> Iterator[tuple[str, bytes]]:
+    """Yield ``(name, bytes)`` one image at a time.
+
+    Limits are validated *eagerly* — this function raises before returning the
+    generator, so a bad archive is rejected at request time rather than
+    halfway through processing. Only the decompression is lazy, which keeps
+    peak memory at one image regardless of archive size.
+    """
+    archive = _open_archive(source)
+    try:
+        candidates = _vet_candidates(archive, limits)
+    except Exception:
+        archive.close()
+        raise
+
+    def _generate() -> Iterator[tuple[str, bytes]]:
         read_total = 0
-        for info, name in candidates:
-            if info.file_size > limits.max_file_bytes:
-                raise UploadRejectedError(
-                    f"{name} is {info.file_size / 1048576:.1f} MB, over the "
-                    f"{limits.max_file_bytes / 1048576:.0f} MB per-image limit.",
-                    status_code=413,
-                )
-            ratio = info.file_size / max(info.compress_size, 1)
-            if ratio > limits.max_compression_ratio:
-                raise UploadRejectedError(
-                    f"{name} expands {ratio:.0f}x, above the "
-                    f"{limits.max_compression_ratio:.0f}x limit; refusing as a possible zip bomb.",
-                    status_code=413,
-                )
+        with archive:
+            for info, name in candidates:
+                # Read one byte past the cap so a lying header is caught too.
+                with archive.open(info) as handle:
+                    payload = handle.read(limits.max_file_bytes + 1)
+                if len(payload) > limits.max_file_bytes:
+                    raise UploadRejectedError(
+                        f"{name} exceeds the {limits.max_file_bytes / 1048576:.0f} MB "
+                        "per-image limit once decompressed.",
+                        status_code=413,
+                    )
 
-            # Read one byte past the cap so a lying header is caught too.
-            with archive.open(info) as handle:
-                payload = handle.read(limits.max_file_bytes + 1)
-            if len(payload) > limits.max_file_bytes:
-                raise UploadRejectedError(
-                    f"{name} exceeds the {limits.max_file_bytes / 1048576:.0f} MB "
-                    "per-image limit once decompressed.",
-                    status_code=413,
-                )
+                read_total += len(payload)
+                if read_total > limits.max_uncompressed_bytes:
+                    raise UploadRejectedError(
+                        "Archive exceeds the total uncompressed size limit.",
+                        status_code=413,
+                    )
+                yield name, payload
 
-            read_total += len(payload)
-            if read_total > limits.max_uncompressed_bytes:
-                raise UploadRejectedError(
-                    "Archive exceeds the total uncompressed size limit.",
-                    status_code=413,
-                )
-            entries.append((name, payload))
+        logger.info("Streamed %d image(s) from archive (%d bytes)", len(candidates), read_total)
 
-    logger.info("Accepted %d image(s) from archive (%d bytes)", len(entries), read_total)
-    return entries
+    return _generate()
+
+
+def safe_zip_entries(source: ZipSource, limits: ZipLimits) -> list[tuple[str, bytes]]:
+    """Every acceptable image in the archive, materialised.
+
+    Convenient for small synchronous uploads. For anything large, iterate
+    :func:`iter_zip_entries` instead — this holds the whole archive at once.
+    """
+    return list(iter_zip_entries(source, limits))
 
 
 def to_result(
@@ -229,48 +284,113 @@ def to_result(
     )
 
 
-def classify_entries(
+#: Decoded RGB is roughly 10x its JPEG size, so a chunk is budgeted by pixels
+#: rather than by file count — 64 thumbnails and 64 DSLR frames differ by two
+#: orders of magnitude in memory.
+DEFAULT_CHUNK_SIZE = 32
+DEFAULT_CHUNK_MEGAPIXELS = 256.0
+
+
+def classify_stream(
     predictor: SupportsPrediction,
-    entries: list[tuple[str, bytes]],
+    entries: Iterable[tuple[str, bytes]],
     *,
     review_threshold: float,
     unknown_threshold: float,
-    batch_size: int = 32,
-) -> list[PredictionResult]:
-    """Classify every entry, keeping per-file failures local.
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    max_chunk_megapixels: float = DEFAULT_CHUNK_MEGAPIXELS,
+    on_progress: Callable[[int], None] | None = None,
+) -> Iterator[PredictionResult]:
+    """Classify an arbitrarily long stream of images in bounded memory.
 
-    Decoding happens first so the readable images can go through the model in
-    batches; an undecodable file becomes an ``ERROR`` row instead of taking
-    the whole upload down with it.
+    Images are decoded, predicted and released a chunk at a time, so peak
+    memory tracks the chunk rather than the archive: a 5 GB upload costs the
+    same as a 50 MB one. A chunk closes when it reaches ``chunk_size`` images
+    *or* ``max_chunk_megapixels`` of decoded pixels, whichever comes first —
+    the pixel budget is the one that actually bounds memory.
+
+    Results are emitted in input order. A file that will not decode becomes an
+    ``ERROR`` row held in its own slot, so a single bad image neither sinks the
+    batch nor jumps ahead of its neighbours in the output.
     """
-    results: list[PredictionResult | None] = [None] * len(entries)
+    slots: list[PredictionResult | None] = []
+    names: list[str] = []
     images: list[Image.Image] = []
-    slots: list[int] = []
+    image_slots: list[int] = []
+    megapixels = 0.0
+    processed = 0
 
-    for index, (name, payload) in enumerate(entries):
+    def flush() -> Iterator[PredictionResult]:
+        nonlocal processed
+        if images:
+            predictions = predictor.predict_batch(images, len(images))
+            for slot, prediction in zip(image_slots, predictions, strict=True):
+                slots[slot] = to_result(
+                    names[slot],
+                    prediction,
+                    review_threshold=review_threshold,
+                    unknown_threshold=unknown_threshold,
+                )
+        for result in slots:
+            if result is not None:
+                processed += 1
+                yield result
+        if on_progress is not None:
+            on_progress(processed)
+
+    for name, payload in entries:
         try:
-            images.append(decode_image(payload))
-            slots.append(index)
+            image = decode_image(payload)
         except ValueError as exc:
             logger.warning("Could not decode %s: %s", name, exc)
-            results[index] = PredictionResult(
-                filename=name,
-                verdict=Verdict.ERROR,
-                needs_review=True,
-                note=f"Could not read image: {exc}",
+            names.append(name)
+            slots.append(
+                PredictionResult(
+                    filename=name,
+                    verdict=Verdict.ERROR,
+                    needs_review=True,
+                    note=f"Could not read image: {exc}",
+                )
             )
+        else:
+            names.append(name)
+            slots.append(None)
+            image_slots.append(len(slots) - 1)
+            images.append(image)
+            megapixels += (image.width * image.height) / 1_000_000
 
-    if images:
-        predictions = predictor.predict_batch(images, batch_size)
-        for slot, prediction in zip(slots, predictions, strict=True):
-            results[slot] = to_result(
-                entries[slot][0],
-                prediction,
-                review_threshold=review_threshold,
-                unknown_threshold=unknown_threshold,
-            )
+        if len(slots) >= chunk_size or megapixels >= max_chunk_megapixels:
+            yield from flush()
+            # Dropping the references here is what actually frees the pixels.
+            slots, names, images, image_slots = [], [], [], []
+            megapixels = 0.0
 
-    return [r for r in results if r is not None]
+    if slots:
+        yield from flush()
+
+
+def classify_entries(
+    predictor: SupportsPrediction,
+    entries: Iterable[tuple[str, bytes]],
+    *,
+    review_threshold: float,
+    unknown_threshold: float,
+    batch_size: int = DEFAULT_CHUNK_SIZE,
+) -> list[PredictionResult]:
+    """Classify every entry and return the results as a list.
+
+    A thin wrapper over :func:`classify_stream` for callers that want the
+    whole answer at once.
+    """
+    return list(
+        classify_stream(
+            predictor,
+            entries,
+            review_threshold=review_threshold,
+            unknown_threshold=unknown_threshold,
+            chunk_size=batch_size,
+        )
+    )
 
 
 def summarize(results: list[PredictionResult]) -> BatchSummary:
