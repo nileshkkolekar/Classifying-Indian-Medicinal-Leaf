@@ -80,6 +80,38 @@ def test_a_forged_token_is_rejected(secured, jpeg_bytes):
     assert response.status_code == 401
 
 
+@pytest.fixture
+def secured_without_a_model(tmp_path, monkeypatch):
+    """Authentication on, and deliberately no model loaded."""
+    monkeypatch.setenv("MLC_AUTH__ENABLED", "true")
+    monkeypatch.setenv("MLC_AUTH__SECRET_KEY", "test-signing-key-not-used-anywhere-real")
+    monkeypatch.setenv("MLC_AUTH__USERS", json.dumps({USERNAME: hash_password(PASSWORD)}))
+    monkeypatch.setenv("MLC_QUEUE__JOB_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setenv("MLC_SERVING__CHECKPOINT_PATH", str(tmp_path / "absent.pt"))
+    monkeypatch.delenv("MLC_AWS__CHECKPOINT_URI", raising=False)
+
+    from medicinal_leaf.api.app import app
+
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("path", PROTECTED)
+def test_credentials_are_checked_before_the_model(secured_without_a_model, jpeg_bytes, path):
+    """A stranger must not learn whether this deployment has a model.
+
+    FastAPI resolves dependencies in signature order. With the model check
+    declared first, an anonymous request got 503 instead of 401 — which
+    quietly discloses deployment state to someone who has not authenticated.
+    Caught by running the container, not by the unit tests.
+    """
+    response = secured_without_a_model.post(path, files=image(jpeg_bytes))
+
+    assert response.status_code == 401
+    assert "model" not in response.json()["detail"].lower()
+
+
 def test_health_stays_public(secured):
     """ECS and load-balancer probes cannot present credentials."""
     assert secured.get("/health").status_code == 200

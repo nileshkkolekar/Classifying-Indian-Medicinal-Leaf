@@ -311,8 +311,8 @@ def health(settings: SettingsDep, request: Request) -> HealthResponse:
 @app.post("/predict", response_model=SingleResult, tags=["predict"])
 async def predict(
     settings: SettingsDep,
-    predictor: PredictorDep,
     _principal: PrincipalDep,
+    predictor: PredictorDep,
     file: Annotated[UploadFile, File(description="A single leaf image (JPG or PNG).")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
@@ -339,8 +339,8 @@ async def predict(
 @app.post("/predict/batch", response_model=BatchResult, tags=["predict"])
 async def predict_batch(
     settings: SettingsDep,
-    predictor: PredictorDep,
     _principal: PrincipalDep,
+    predictor: PredictorDep,
     file: Annotated[UploadFile, File(description="A ZIP archive of leaf images.")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
@@ -389,8 +389,8 @@ async def predict_batch(
 async def submit_job(
     settings: SettingsDep,
     jobs: JobsDep,
-    predictor: PredictorDep,  # noqa: ARG001 - fail fast if no model is loaded
     principal: PrincipalDep,
+    predictor: PredictorDep,  # noqa: ARG001 - fail fast if no model is loaded
     file: Annotated[UploadFile, File(description="A ZIP archive of leaf images.")],
     review_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     unknown_threshold: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
