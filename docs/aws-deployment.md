@@ -34,7 +34,37 @@ better home for the model, with the UI staying on Fargate.
 The image is built once and tagged with the commit SHA, so a running task is
 always traceable to the source that produced it.
 
-## One-time setup
+## One-time setup, scripted
+
+Everything below is automated. Install the AWS CLI, run `aws configure`, then:
+
+```bash
+AWS_REGION=ap-south-1 BUCKET=leaf-<yourname>-2026 ./infra/bootstrap-aws.sh
+```
+
+It creates the ECR repository, a private encrypted bucket, the OIDC provider,
+three scoped IAM roles, log groups with 14-day retention, the cluster, and
+both task definitions — substituting the placeholders as it goes. It is
+idempotent, so a failure part-way through is fixed by re-running it.
+
+It deliberately stops short of creating **services**, because that needs your
+VPC details and it is the step that starts billing. The script prints the
+exact command, along with the GitHub secret and variables to set.
+
+To stop paying:
+
+```bash
+AWS_REGION=ap-south-1 ./infra/teardown-aws.sh            # scale to zero
+AWS_REGION=ap-south-1 ./infra/teardown-aws.sh --delete   # remove services
+```
+
+Scaling to zero stops essentially all cost and reverses in one command — that
+is usually what you want between demos.
+
+The rest of this document explains what the script does and why, for when you
+need to change it or answer for it.
+
+## One-time setup, by hand
 
 Replace `ACCOUNT_ID`, `AWS_REGION` and `BUCKET_NAME` throughout — including
 in `infra/ecs-task-definition*.json`.
