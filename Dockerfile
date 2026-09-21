@@ -40,7 +40,10 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu \
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-RUN pip install ".[serve]"
+# The aws extra is not optional here: a deployed container fetches its
+# checkpoint from S3 at startup, which needs boto3. Without it the app comes
+# up healthy but modelless, which is a confusing way to fail.
+RUN pip install ".[serve,aws]"
 
 # ── Runtime ──────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
