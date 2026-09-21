@@ -45,6 +45,9 @@ logs/
 *.pth
 *.onnx
 
+# Rendered task definitions, written and removed by infra/bootstrap-aws.sh.
+.aws-render/
+
 # ── Frontend ─────────────────────────────────────────────────────────────
 node_modules/
 frontend/dist/

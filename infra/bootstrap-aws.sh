@@ -18,6 +18,14 @@
 
 set -euo pipefail
 
+# Git Bash on Windows rewrites any argument that looks like a Unix path into
+# a Windows one. CloudWatch log groups are *named* "/ecs/leaf-api" — a name,
+# not a path — and would arrive at AWS as "C:/Program Files/Git/ecs/leaf-api",
+# which fails validation. Harmless everywhere else; this variable simply does
+# not exist on Linux or macOS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 # ── Inputs ───────────────────────────────────────────────────────────────
 
 AWS_REGION="${AWS_REGION:-}"
@@ -220,7 +228,11 @@ fi
 # ── Task definitions ─────────────────────────────────────────────────────
 
 say "7/7  Task definitions"
-WORK="$(mktemp -d)"
+# A directory inside the project, referenced relatively. An absolute path
+# from mktemp would be a Unix path like /tmp/tmp.abc, which the Windows
+# aws.exe cannot open — the same mismatch, one layer down.
+WORK=".aws-render"
+rm -rf "$WORK"; mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
 for pair in "ecs-task-definition.json:leaf-api" "ecs-task-definition-ui.json:leaf-ui"; do
