@@ -1,5 +1,6 @@
-# Full training run: larger backbone, longer schedule, GPU assumptions.
-# Intended to be launched as `MLC_ENV=production leaf-train fit`.
+# V3 Training Configuration
+# ResNet50 + 5-class already-segmented medicinal leaf dataset
+# Intended for local CPU training.
 
 seed: 42
 
@@ -8,97 +9,198 @@ data:
   processed_dir: artifacts/processed
   manifest_path: artifacts/manifest.csv
   image_extensions: [".jpg", ".jpeg", ".png"]
+
   min_side: 64
   max_aspect_ratio: 4.0
+
   min_images_per_class: 25
   max_imbalance_ratio: 3.0
+
   train_size: 0.70
   val_size: 0.15
   test_size: 0.15
 
+
+# ============================================================
+# PREPROCESSING
+# ============================================================
+
 preprocessing:
   image_size: 320
+
+  # Keeps the complete segmented leaf while preserving aspect ratio.
   resize_strategy: letterbox
+
+  # ImageNet normalization because ResNet50 is ImageNet pretrained.
   normalize_mean: [0.485, 0.456, 0.406]
   normalize_std: [0.229, 0.224, 0.225]
-  # Background clutter is the dominant confounder on field-captured leaves.
-  segment_leaf: true
+
+  # IMPORTANT:
+  # Images in Data/ are already segmented.
+  # Do NOT run the repository segmentation again.
+  segment_leaf: false
+
   segment_pad: 12
+
+
+# ============================================================
+# DATA AUGMENTATION
+# ============================================================
 
 augmentation:
   enabled: true
+
   horizontal_flip: 0.5
   vertical_flip: 0.3
+
   rotation_degrees: 30.0
+
   random_resized_crop_scale: [0.6, 1.0]
+
   color_jitter_brightness: 0.3
   color_jitter_contrast: 0.3
   color_jitter_saturation: 0.3
   color_jitter_hue: 0.03
+
   random_erasing: 0.25
 
+
+# ============================================================
+# MODEL
+# ============================================================
+
 model:
-  backbone: efficientnet_b0
+  # V3 model
+  backbone: resnet50
+
+  # Use ImageNet pretrained ResNet50.
   pretrained: true
+
+  # Dropout before classification head.
   dropout: 0.3
+
+  # Fine-tune the complete ResNet50.
   freeze_backbone: false
+
   unfreeze_after_epoch: null
 
+
+# ============================================================
+# TRAINING
+# ============================================================
+
 training:
-  epochs: 60
-  batch_size: 64
-  learning_rate: 0.0003
+
+  # Maximum number of epochs.
+  # Early stopping can stop training earlier.
+  epochs: 50
+
+  # CPU-friendly batch size.
+  batch_size: 16
+
+  # Transfer-learning learning rate.
+  learning_rate: 0.0001
+
   weight_decay: 0.0005
+
   optimizer: adamw
+
   scheduler: cosine
+
   warmup_epochs: 3
+
+  # Helps reduce overconfidence.
   label_smoothing: 0.1
+
+  # Useful if class counts are not perfectly balanced.
   class_weighting: true
+
   gradient_clip_norm: 1.0
-  early_stopping_patience: 10
+
+  # Stop if validation macro-F1 doesn't improve.
+  early_stopping_patience: 8
+
   early_stopping_metric: val_macro_f1
-  num_workers: 8
-  pin_memory: true
-  mixed_precision: true
+
+  # Windows/local CPU.
+  num_workers: 0
+
+  # Pinning memory is mainly useful with GPU.
+  pin_memory: false
+
+  # Your local PyTorch is CPU-only.
+  mixed_precision: false
+
+  # Automatically selects CPU because CUDA is unavailable.
   device: auto
+
   checkpoint_dir: artifacts/checkpoints
+
   run_dir: artifacts/runs
+
+
+# ============================================================
+# SERVING
+# ============================================================
 
 serving:
   checkpoint_path: artifacts/checkpoints/best.pt
-  # Bind all interfaces: in a container the port is published by the runtime.
+
   host: 0.0.0.0
   port: 8000
-  # Stricter than development: a wrong species stated confidently is the
-  # failure mode that matters here, so more gets routed to review.
+
   review_threshold: 0.80
   unknown_threshold: 0.40
+
   max_image_bytes: 15728640
   max_archive_bytes: 209715200
   max_zip_entries: 500
   max_zip_uncompressed_bytes: 1073741824
   max_compression_ratio: 100.0
+
   allowed_extensions: [".jpg", ".jpeg", ".png"]
+
   api_base_url: http://127.0.0.1:8000
+
   request_timeout_seconds: 300.0
+
+
+# ============================================================
+# AUTHENTICATION
+# ============================================================
 
 auth:
   enabled: true
-  # Shorter window than development: a leaked token stays useful for less time.
+
   access_token_expire_minutes: 30
-  # MLC_AUTH__SECRET_KEY, MLC_AUTH__USERS and MLC_AUTH__API_KEY_SHA256 come
-  # from the environment. Startup FAILS here if the secret key is unset —
-  # an invented key would differ per replica and reset on every deploy.
+
+  # These values should come from environment variables.
+  # MLC_AUTH__SECRET_KEY
+  # MLC_AUTH__USERS
+  # MLC_AUTH__API_KEY_SHA256
+
+
+# ============================================================
+# QUEUE
+# ============================================================
 
 queue:
   enabled: true
+
   job_dir: artifacts/jobs
+
   max_queued_jobs: 32
-  chunk_size: 64
-  # Fargate tasks are sized 3 GB; keep a chunk well inside that.
+
+  chunk_size: 16
+
   max_chunk_megapixels: 512.0
+
   max_archive_bytes: 10737418240
+
   max_zip_entries: 50000
+
   max_zip_uncompressed_bytes: 107374182400
+
   retention_hours: 72.0
+
   ui_max_upload_mb: 2048

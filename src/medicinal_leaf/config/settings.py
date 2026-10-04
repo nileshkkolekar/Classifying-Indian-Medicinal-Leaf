@@ -103,7 +103,7 @@ class PreprocessingConfig(BaseModel):
     normalize_std: tuple[float, float, float] = (0.229, 0.224, 0.225)
 
     # Background removal before resizing (see preprocessing.segmentation).
-    segment_leaf: bool = False
+    segment_leaf: bool = True
     segment_pad: int = Field(default=8, ge=0)
 
 
